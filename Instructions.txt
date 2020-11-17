@@ -1,0 +1,6 @@
+ADD D, S1, S2	# D = S1 + S2
+SUB D, S1, S2	# D = S1 - S2
+MUL D, S1, S2	# D = S1 * S2
+DIV D, S1, S2	# D = S1 / S2
+LD  D, Value    # D = Value 
+BGE S1, S2, L   # Branch to Address L if S1 greater than or equal to S2 

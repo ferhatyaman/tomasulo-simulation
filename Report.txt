@@ -1,0 +1,37 @@
+------------------------
+CYCLE 0
+
+Instruction Window
+LD R0, 0.0
+ADD R2, R1, R0
+SUB R1, R2, 1
+MUL R2, R1, 2
+
+Registers
+R0: -   ROB0
+R1: -   ROB1
+R2: -   -
+R3: -   -
+
+Reservation Stations
+RS0: ADD 0.0  1.0  ROB0  
+RS1: MUL 2.0  3.0  ROB1
+RS2:  
+RS3:
+RS4:
+
+Reorder Buffer
+ROB0: ADD R0 - (H)
+ROB1: MUL R1 - (T)
+ROB2:
+ROB3:
+ROB4:
+
+Common Data Bus
+6.0 ROB1
+
+------------------------
+CYCLE 1
+
+
+

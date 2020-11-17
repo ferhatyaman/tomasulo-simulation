@@ -1,0 +1,2 @@
+number_of_registers: 4
+instruction_window_size: 4
