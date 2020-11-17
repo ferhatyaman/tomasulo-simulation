@@ -6,10 +6,13 @@ class RegisterFile:
 
     def __str__(self):
         file = ''
-        for reg in self.registers:
+        for reg in self.registers.values():
             file += str(reg) + '\n'
 
         return file
+
+    def __getitem__(self, key):
+        return self.registers[key]
 
     def is_available(self, reg):
         return not self.registers[reg].busy
@@ -44,6 +47,22 @@ class ReservationStation:
             file += str(rs) + '\n'
         return file
 
+    def execute(self, CDB):
+        for rs in self.list:
+            value = rs.execute()
+            if value is not None:
+                CDB.append(value)
+
+    def update_with_rob(self, rob_id, value):
+        for rs in self.list:
+            if rs.qj == rob_id:
+                rs.vj = value
+                rs.qj = ''
+            if rs.qk == rob_id:
+                rs.vk = rob_id
+                rs.qk = ''
+            rs.busy = False
+
 
 class InstructionQueue:
     def __init__(self, window_size, program):
@@ -69,6 +88,9 @@ class InstructionQueue:
 
     def empty(self):
         return len(self.queue) == 0
+
+    def enqueue(self, inst):
+        self.queue.append(inst)
 
 
 class ReOrderBuffer:
@@ -100,17 +122,24 @@ class ReOrderBuffer:
             raise IndexError("ROB is full, smthg is wrong.")
         else:
             self.list[self.tail].update(inst.op, inst_id, inst.d, True, False)
-            self.tail = +1
-            if self.tail == self.size:
-                self.tail = 0
+            tmp = self.tail
+            self.tail += 1 % self.size
 
-            return self.list[self.tail].name
+            return self.list[tmp].name
 
     def getby_reg(self,reg_name):
         for rob in self.list:
             if rob.dest == reg_name:
                 return rob
         return None
+
+    def getby_rob_id(self, rob_id):
+        for rob in self.list:
+            if rob.name == rob_id:
+                return rob
+
+    def get_head(self):
+        return self.list[self.head]
 
 
 class Architecture:
@@ -143,8 +172,11 @@ class Architecture:
         # Instruction Queue
         self.IQ = InstructionQueue(self.inst_window_size, self.program)
 
-        self.ROB = ReOrderBuffer()
         # ReOrder Buffer
+        self.ROB = ReOrderBuffer()
+
+        # Common Data Bus
+        self.CDB = []
 
     def start(self):
         while not self.done:
@@ -196,9 +228,12 @@ class Architecture:
             rob_id = self.ROB.add(inst_id, inst)
 
             rs = self.RS.get_rs(inst.op)
+            rs.busy = True
             rs.inst_id = inst_id
             rs.op = inst.op
             rs.dest = rob_id
+
+            self.RF[inst.d].reorder = rob_id
 
             # Case of Branch
             # Branch Prediction
@@ -212,6 +247,8 @@ class Architecture:
                             rs.vj = rob_s1.value
                             rs.qj = ''
                             # TODO S1 da update edilmeli mi?
+                            self.RF[inst.s1].reorder = rob_id
+                            self.RF[inst.s1].busy = True
                         else:
                             rs.qj = rob_id
                     else:
@@ -228,8 +265,11 @@ class Architecture:
                             rs.vj = rob_s1.value
                             rs.qj = ''
                             # TODO S1 da update edilmeli mi?
+                            self.RF[inst.s1].reorder = rob_id
+                            self.RF[inst.s1].busy = True
+
                         else:
-                            rs.qj = rob_id
+                            rs.qj = rob_s1.name
                     else:
                         rs.vj = self.RF[inst.s1].value
                         rs.qj = ''
@@ -244,8 +284,10 @@ class Architecture:
                             rs.vk = rob_s2.value
                             rs.qk = ''
                             # TODO S2 da update edilmeli mi?
+                            self.RF[inst.s2].reorder = rob_id
+                            self.RF[inst.s2].busy = True
                         else:
-                            rs.qk = rob_id
+                            rs.qk = rob_s2.name
                     else:
                         rs.vk = self.RF[inst.s2].value
                         rs.qk = ''
@@ -255,19 +297,38 @@ class Architecture:
 
 
     def execute(self):
-        pass
+        self.RS.execute(self.CDB)
 
     def write_back(self):
-        pass
+        if self.cycle != 0 and len(self.CDB) != 0:
+            rob_id, value = self.CDB.pop(0)
+
+            rob = self.ROB.getby_rob_id(rob_id)
+            rob.ready = True
+            rob.value = value
+
+            self.RS.update_with_rob(rob_id, value)
 
     def commit(self):
-        pass
+        head_rob = self.ROB.get_head()
+        if head_rob.ready:
+            reg = self.RF[head_rob.dest]
+            reg.value = head_rob.value
+            head_rob.busy = False
+            if self.ROB.getby_reg(reg.name) is None:
+                reg.busy = False
 
     def update_clock(self):
-        pass
+        self.cycle += 1
+        self.IQ.enqueue(self.program[self.PC].copy())
+        self.PC += 4
 
     def update_exit_cond(self):
-        pass
+        try:
+            inst = self.program[self.PC]
+        except:
+            self.done = True
+
 
 
 class ROBEntry:
@@ -287,7 +348,7 @@ class ROBEntry:
             return self.name + ': ' + self.op + ' ' + self.dest
 
     def update(self, op, inst_id, dest, busy, ready, value=0):
-        self.op = op;
+        self.op = op
         self.inst_id = inst_id
         self.dest = dest
         self.value = value
@@ -312,22 +373,65 @@ class RSEntry:
         self.cycle = cycle
         self.counter = self.cycle
 
+    def execute(self):
+        if self.busy:
+            # TODO: BRANCH PREDICTION
+            if self.op == 'LD':
+                if self.qj == '':
+                    self.counter -= 1
+                    return [self.dest, self.vj]
+            else:
+                if self.counter == 0 and (self.qj != '' or self.qk != ''):
+                    self.counter -= 1
+                    if self.op == 'ADD':
+                        return [self.dest, self.vj + self.vk]
+                    if self.op == 'SUB':
+                        return [self.dest, self.vj - self.vk]
+                    if self.op == 'MUL':
+                        return [self.dest, self.vj * self.vk]
+                    if self.op == 'DIV':
+                        return [self.dest, self.vj / self.vk]
+
+        else:
+            return
+
     def __str__(self):
         if self.op == '':
             return 'RS' + str(self.id) + ':'
         else:
-            return 'RS' + str(self.id) + ': ' + self.op + ' ' + str(self.vj) + ' ' + str(self.vk) + ' ' + self.dest
+            line = 'RS' + str(self.id) + ': ' + self.op + ' '
+            if self.qj != '':
+                line += self.qj + ' '
+            else:
+                line += str(self.vj) + ' '
+            if self.qk != '':
+                line += self.qk + ' '
+            else:
+                line += str(self.vk) + ' '
+            return line + self.dest
 
 
 class Register:
     def __init__(self, name):
         self.name = name
-        self.value = 0
-        self.reorder = ''
+        self.value = None
+        self.reorder = None
         self.busy = False
 
     def __str__(self):
-        return self.name + ': ' + str(self.value) + ' ' + self.reorder
+        if self.value is None and self.reorder is None:
+            return self.name + ': '
+        elif self.value is None:
+            return self.name + ': ' + '\t' + ' ' + self.reorder
+        elif self.reorder is None:
+            return self.name + ': ' + str(self.value)
+        else:
+            return self.name + ': ' + str(self.value) + ' ' + self.reorder
+
+    def update(self, rob, value, busy):
+        self.value = value
+        self.reorder = rob
+        self.busy = busy
 
 
 class Instruction:
