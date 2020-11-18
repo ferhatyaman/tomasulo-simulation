@@ -1,3 +1,6 @@
+from Entry import *
+
+
 class RegisterFile:
     def __init__(self, numb_reg):
         self.registers = {}
@@ -59,14 +62,14 @@ class ReservationStation:
                 rs.vj = value
                 rs.qj = ''
             if rs.qk == rob_id:
-                rs.vk = rob_id
+                rs.vk = value
                 rs.qk = ''
-            rs.busy = False
 
 
 class InstructionQueue:
     def __init__(self, window_size, program):
         self.queue = []
+        self.size = window_size
         for i in range(window_size):
             self.queue.append(program[i * 4].copy())
         self.curr_id = 0
@@ -74,7 +77,7 @@ class InstructionQueue:
 
     def __str__(self):
         file = ''
-        for inst in self.queue:
+        for inst in self.queue[0:self.size]:
             file += str(inst) + '\n'
 
         return file
@@ -90,6 +93,7 @@ class InstructionQueue:
         return len(self.queue) == 0
 
     def enqueue(self, inst):
+        # if len(self.queue) < self.size:
         self.queue.append(inst)
 
 
@@ -125,7 +129,7 @@ class ReOrderBuffer:
         else:
             self.list[self.tail].update(inst.op, inst_id, inst.d, True, False)
             tmp = self.tail
-            self.tail += 1 % self.size
+            self.tail = (self.tail + 1) % self.size
 
             return self.list[tmp].name
 
@@ -142,6 +146,9 @@ class ReOrderBuffer:
 
     def get_head(self):
         return self.list[self.head]
+
+    def update_head(self):
+        self.head = (self.head + 1) % self.size
 
 
 class Architecture:
@@ -184,9 +191,12 @@ class Architecture:
         while not self.done:
             self.print_cycle()
             self.issue()
-            self.execute()
-            self.write_back()
-            self.commit()
+            if self.cycle > 0:
+                self.execute()
+            if self.cycle > 1:
+                self.write_back()
+            if self.cycle > 2:
+                self.commit()
             self.update_clock()
             self.update_exit_cond()
 
@@ -227,7 +237,7 @@ class Architecture:
                 else:
                     return
 
-            rob_id = self.ROB.add(inst_id, inst)
+            rob_id = self.ROB.list[self.ROB.tail].name
 
             rs = self.RS.get_rs(inst.op)
             rs.busy = True
@@ -235,7 +245,6 @@ class Architecture:
             rs.op = inst.op
             rs.dest = rob_id
 
-            self.RF[inst.d].reorder = rob_id
 
             # Case of Branch
             # Branch Prediction
@@ -248,7 +257,6 @@ class Architecture:
                         if rob_s1.ready:
                             rs.vj = rob_s1.value
                             rs.qj = ''
-                            # TODO S1 da update edilmeli mi?
                             self.RF[inst.s1].reorder = rob_id
                             self.RF[inst.s1].busy = True
                         else:
@@ -261,48 +269,64 @@ class Architecture:
                     rs.qj = ''
             else:
                 if Instruction.is_operand_reg(inst.s1):
-                    if self.RF.is_available(inst.s1):
+                    if not self.RF[inst.s1].busy:
                         rob_s1 = self.ROB.getby_reg(inst.s1)
-                        if rob_s1.ready:
-                            rs.vj = rob_s1.value
-                            rs.qj = ''
-                            # TODO S1 da update edilmeli mi?
-                            self.RF[inst.s1].reorder = rob_id
-                            self.RF[inst.s1].busy = True
+                        if rob_s1 is not None:
+                            if rob_s1.ready:
+                                rs.vj = rob_s1.value
+                                rs.qj = ''
+                                self.RF[inst.s1].reorder = rob_id
+                                self.RF[inst.s1].busy = True
 
+                            else:
+                                rs.qj = rob_s1.name
                         else:
-                            rs.qj = rob_s1.name
+                            rs.vj = self.RF[inst.s1].value
+                            rs.qj = ''
                     else:
-                        rs.vj = self.RF[inst.s1].value
-                        rs.qj = ''
+                        rob_s1 = self.ROB.getby_reg(inst.s1)
+                        if rob_s1.name == self.RF[inst.s1].reorder:
+                            rs.qj = rob_s1.name
+                        else:
+                            rs.vj = self.RF[inst.s1].value
+                            rs.qj = ''
                 else:
                     rs.vj = int(inst.s1)
                     rs.qj = ''
 
                 if Instruction.is_operand_reg(inst.s2):
-                    if self.RF.is_available(inst.s2):
+                    if not self.RF[inst.s2].busy:
                         rob_s2 = self.ROB.getby_reg(inst.s2)
-                        if rob_s2.ready:
-                            rs.vk = rob_s2.value
-                            rs.qk = ''
-                            # TODO S2 da update edilmeli mi?
-                            self.RF[inst.s2].reorder = rob_id
-                            self.RF[inst.s2].busy = True
+                        if rob_s2 is not None:
+                            if rob_s2.ready:
+                                rs.vk = rob_s2.value
+                                rs.qk = ''
+                                self.RF[inst.s2].reorder = rob_id
+                                self.RF[inst.s2].busy = True
+                            else:
+                                rs.qk = rob_s2.name
                         else:
-                            rs.qk = rob_s2.name
+                            rs.vk = self.RF[inst.s2].value
+                            rs.qk = ''
                     else:
-                        rs.vk = self.RF[inst.s2].value
-                        rs.qk = ''
+                        rob_s2 = self.ROB.getby_reg(inst.s2)
+                        if rob_s2.name == self.RF[inst.s2].reorder:
+                            rs.qk = rob_s2.name
+                        else:
+                            rs.vk = self.RF[inst.s2].value
+                            rs.qk = ''
                 else:
                     rs.vk = int(inst.s2)
                     rs.qk = ''
 
+            self.ROB.add(inst_id, inst)
+            self.RF[inst.d].reorder = rob_id
 
     def execute(self):
         self.RS.execute(self.CDB)
 
     def write_back(self):
-        if self.cycle != 0 and len(self.CDB) != 0:
+        if len(self.CDB) != 0:
             rob_id, value = self.CDB.pop(0)
 
             rob = self.ROB.getby_rob_id(rob_id)
@@ -316,154 +340,24 @@ class Architecture:
         if head_rob.ready:
             reg = self.RF[head_rob.dest]
             reg.value = head_rob.value
+            if head_rob.name == reg.reorder:
+                reg.reorder = ''
             head_rob.busy = False
+            self.ROB.update_head()
             if self.ROB.getby_reg(reg.name) is None:
                 reg.busy = False
 
     def update_clock(self):
         self.cycle += 1
-        self.IQ.enqueue(self.program[self.PC].copy())
-        self.PC += 4
+        inst_copy = self.program[self.PC].copy()
+        self.IQ.enqueue(inst_copy)
+        if inst_copy.op.startswith('B'):
+            self.PC = int(inst_copy.s2)
+        else:
+            self.PC += 4
 
     def update_exit_cond(self):
         try:
             inst = self.program[self.PC]
         except:
             self.done = True
-
-
-
-class ROBEntry:
-    def __init__(self, name):
-        self.name = name
-        self.op = ''
-        self.inst_id = -1
-        self.busy = False
-        self.ready = True
-        self.dest = ''
-        self.value = 0
-
-    def __str__(self):
-        if self.op == '':
-            return self.name + ': '
-        else:
-            return self.name + ': ' + self.op + ' ' + self.dest
-
-    def update(self, op, inst_id, dest, busy, ready, value=0):
-        self.op = op
-        self.inst_id = inst_id
-        self.dest = dest
-        self.value = value
-        self.busy = busy
-        self.ready = ready
-
-
-class RSEntry:
-    def __init__(self, id, name, cycle):
-        self.id = id
-        self.inst_id = -1
-        self.op = ""
-        self.busy = False
-        self.vj = 0
-        self.vk = 0
-        self.qj = ""
-        self.qk = ""
-        self.dest = ""
-
-        # Functional Unit Params
-        self.unit_names = name.split(',')
-        self.cycle = cycle
-        self.counter = self.cycle
-
-    def execute(self):
-        if self.busy:
-            # TODO: BRANCH PREDICTION
-            if self.op == 'LD':
-                if self.qj == '':
-                    self.counter -= 1
-                    return [self.dest, self.vj]
-            else:
-                if self.counter == 0 and (self.qj != '' or self.qk != ''):
-                    self.counter -= 1
-                    if self.op == 'ADD':
-                        return [self.dest, self.vj + self.vk]
-                    if self.op == 'SUB':
-                        return [self.dest, self.vj - self.vk]
-                    if self.op == 'MUL':
-                        return [self.dest, self.vj * self.vk]
-                    if self.op == 'DIV':
-                        return [self.dest, self.vj / self.vk]
-
-        else:
-            return
-
-    def __str__(self):
-        if self.op == '':
-            return 'RS' + str(self.id) + ':'
-        else:
-            line = 'RS' + str(self.id) + ': ' + self.op + ' '
-            if self.qj != '':
-                line += self.qj + ' '
-            else:
-                line += str(self.vj) + ' '
-            if self.qk != '':
-                line += self.qk + ' '
-            else:
-                line += str(self.vk) + ' '
-            return line + self.dest
-
-
-class Register:
-    def __init__(self, name):
-        self.name = name
-        self.value = None
-        self.reorder = None
-        self.busy = False
-
-    def __str__(self):
-        if self.value is None and self.reorder is None:
-            return self.name + ': '
-        elif self.value is None:
-            return self.name + ': ' + '\t' + ' ' + self.reorder
-        elif self.reorder is None:
-            return self.name + ': ' + str(self.value)
-        else:
-            return self.name + ': ' + str(self.value) + ' ' + self.reorder
-
-    def update(self, rob, value, busy):
-        self.value = value
-        self.reorder = rob
-        self.busy = busy
-
-
-class Instruction:
-    def __init__(self, op_name, d, s1, s2=None):
-        self.op = op_name
-        self.d = d
-        self.s1 = s1
-        self.s2 = s2
-
-    def copy(self):
-        return Instruction(self.op, self.d, self.s1, self.s2)
-
-    @staticmethod
-    def is_operand_reg(operand):
-        try:
-            value = int(operand)
-            return False
-        except:
-            return True
-
-    def __str__(self):
-
-        if self.s2 is None:
-            return self.op + ' ' + self.d + ', ' + self.s1
-        else:
-            return self.op + ' ' + self.d + ', ' + self.s1 + ', ' + self.s2
-
-    @classmethod
-    def fromlist(cls, inst_list):
-        if len(inst_list) == 3:
-            return cls(inst_list[0], inst_list[1], inst_list[2])
-        else:
-            return cls(inst_list[0], inst_list[1], inst_list[2], inst_list[3])
