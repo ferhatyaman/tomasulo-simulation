@@ -229,8 +229,10 @@ class Architecture:
                 else:
                     return
             elif next_inst.op == 'BGE':
-                # TODO: Branch Prediction Yapman lazım
-                pass
+                if self.RS.is_available(next_inst.op):
+                    inst_id, inst = self.IQ.dequeue()
+                else:
+                    return
             else:
                 if self.RS.is_available(next_inst.op):
                     inst_id, inst = self.IQ.dequeue()
@@ -248,9 +250,7 @@ class Architecture:
 
             # Case of Branch
             # Branch Prediction
-            if inst.op.startswith('B'):
-                pass
-            elif inst.op == 'LD':
+            if inst.op == 'LD':
                 if Instruction.is_operand_reg(inst.s1):
                     if self.RF.is_available(inst.s1):
                         rob_s1 = self.ROB.getby_reg(inst.s1)
@@ -267,6 +267,52 @@ class Architecture:
                 else:
                     rs.vj = int(inst.s1)
                     rs.qj = ''
+            elif inst.op == 'BGE':
+                if Instruction.is_operand_reg(inst.d):
+                    if not self.RF[inst.d].busy:
+                        rob_d = self.ROB.getby_reg(inst.d)
+                        if rob_d is not None:
+                            if rob_d.ready:
+                                rs.vj = rob_d.value
+                                rs.qj = ''
+                            else:
+                                rs.qj = rob_d.name
+                        else:
+                            rs.vj = self.RF[inst.d].value
+                            rs.qj = ''
+                    else:
+                        rob_d = self.ROB.getby_reg(inst.d)
+                        if rob_d.name == self.RF[inst.d].reorder:
+                            rs.qj = rob_d.name
+                        else:
+                            rs.vj = self.RF[inst.d].value
+                            rs.qj = ''
+                else:
+                    rs.vj = int(inst.d)
+                    rs.qj = ''
+
+                if Instruction.is_operand_reg(inst.s1):
+                    if not self.RF[inst.s1].busy:
+                        rob_s1 = self.ROB.getby_reg(inst.s1)
+                        if rob_s1 is not None:
+                            if rob_s1.ready:
+                                rs.vk = rob_s1.value
+                                rs.qk = ''
+                            else:
+                                rs.qk = rob_s1.name
+                        else:
+                            rs.vk = self.RF[inst.s1].value
+                            rs.qk = ''
+                    else:
+                        rob_s1 = self.ROB.getby_reg(inst.s1)
+                        if rob_s1.name == self.RF[inst.s1].reorder:
+                            rs.qk = rob_s1.name
+                        else:
+                            rs.vk = self.RF[inst.s1].value
+                            rs.qk = ''
+                else:
+                    rs.vk = int(inst.s1)
+                    rs.qk = ''
             else:
                 if Instruction.is_operand_reg(inst.s1):
                     if not self.RF[inst.s1].busy:
@@ -346,6 +392,8 @@ class Architecture:
             self.ROB.update_head()
             if self.ROB.getby_reg(reg.name) is None:
                 reg.busy = False
+            else:
+                reg.busy = True
 
     def update_clock(self):
         self.cycle += 1

@@ -66,6 +66,8 @@ class RSEntry:
                             return [self.dest, self.vj * self.vk]
                         if self.op == 'DIV':
                             return [self.dest, self.vj / self.vk]
+                        if self.op == 'BGE':
+                            return [self.dest, 1 if self.vj >= self.vk else 0]
                     else:
                         self.counter -= 1
                         return
