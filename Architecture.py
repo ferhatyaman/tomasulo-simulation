@@ -109,7 +109,9 @@ class ReOrderBuffer:
         # TODO: Burası olmadı buraya tekrar bak
         file = ''
         for i, rob in enumerate(self.list):
-            if i == self.head:
+            if i == self.head and i == self.tail:
+                file += str(rob) + ' - (H) - (T)\n'
+            elif i == self.head:
                 file += str(rob) + ' - (H)\n'
             elif i == self.tail:
                 file += str(rob) + ' - (T)\n'
