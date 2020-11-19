@@ -65,6 +65,13 @@ class ReservationStation:
                 rs.vk = value
                 rs.qk = ''
 
+    def flush(self, inst_id):
+        for rs in self.list:
+            if rs.busy and rs.inst_id == inst_id:
+                rs.busy = False
+                rs.qj = ''
+                rs.qk = ''
+
 
 class InstructionQueue:
     def __init__(self, window_size, program):
@@ -95,6 +102,10 @@ class InstructionQueue:
     def enqueue(self, inst):
         # if len(self.queue) < self.size:
         self.queue.append(inst)
+
+    def flush(self):
+        while not self.empty():
+            self.queue.pop(0)
 
 
 class ReOrderBuffer:
@@ -133,9 +144,9 @@ class ReOrderBuffer:
 
             return self.list[tmp].name
 
-    def getby_reg(self,reg_name):
+    def getby_reg(self, reg_name):
         for rob in self.list:
-            if rob.dest == reg_name:
+            if rob.busy and rob.dest == reg_name:
                 return rob
         return None
 
@@ -149,6 +160,25 @@ class ReOrderBuffer:
 
     def update_head(self):
         self.head = (self.head + 1) % self.size
+
+    def flush(self):
+        for i, rob in enumerate(self.list):
+            if rob.op.startswith('B') and rob.busy and rob.ready and rob.value == 0:
+                rob_list = []
+                rob.busy = False
+                while i != self.head:
+                    if self.list[i].busy:
+                        rob_list.append(self.list[i])
+                        self.list[i].busy = False
+                        self.tail = (self.tail - 1) % self.size
+                    i = (i + 1) % self.size
+                return rob_list
+
+    def is_empty(self):
+        for rob in self.list:
+            if rob.busy is True:
+                return False
+        return True
 
 
 class Architecture:
@@ -193,12 +223,13 @@ class Architecture:
             self.issue()
             if self.cycle > 0:
                 self.execute()
+            self.print_CDB()
             if self.cycle > 1:
                 self.write_back()
             if self.cycle > 2:
                 self.commit()
             self.update_clock()
-            self.update_exit_cond()
+        self.print_cycle()
 
     def print_cycle(self):
         print('------------------------')
@@ -215,6 +246,11 @@ class Architecture:
 
         print('\nReorder Buffer')
         print(self.ROB)
+
+    def print_CDB(self):
+        print('\nCommon Data Bus')
+        if len(self.CDB) != 0:
+            print(self.CDB[0])
 
     def issue(self):
         if self.IQ.empty():
@@ -247,7 +283,6 @@ class Architecture:
             rs.op = inst.op
             rs.dest = rob_id
 
-
             # Case of Branch
             # Branch Prediction
             if inst.op == 'LD':
@@ -275,6 +310,9 @@ class Architecture:
                             if rob_d.ready:
                                 rs.vj = rob_d.value
                                 rs.qj = ''
+                                self.RF[inst.d].reorder = rob_id
+                                self.RF[inst.d].busy = True
+
                             else:
                                 rs.qj = rob_d.name
                         else:
@@ -298,6 +336,8 @@ class Architecture:
                             if rob_s1.ready:
                                 rs.vk = rob_s1.value
                                 rs.qk = ''
+                                self.RF[inst.s1].reorder = rob_id
+                                self.RF[inst.s1].busy = True
                             else:
                                 rs.qk = rob_s1.name
                         else:
@@ -364,7 +404,7 @@ class Architecture:
                 else:
                     rs.vk = int(inst.s2)
                     rs.qk = ''
-
+            # TODO branch ise roba ekleme
             self.ROB.add(inst_id, inst)
             self.RF[inst.d].reorder = rob_id
 
@@ -378,7 +418,11 @@ class Architecture:
             rob = self.ROB.getby_rob_id(rob_id)
             rob.ready = True
             rob.value = value
-
+            if rob.op.startswith('B') and rob.value == 0:
+                self.cycle += 1
+                self.print_cycle()
+                self.flush()
+                self.PC = self.last_branch_PC
             self.RS.update_with_rob(rob_id, value)
 
     def commit(self):
@@ -392,20 +436,34 @@ class Architecture:
             self.ROB.update_head()
             if self.ROB.getby_reg(reg.name) is None:
                 reg.busy = False
-            else:
-                reg.busy = True
 
     def update_clock(self):
         self.cycle += 1
-        inst_copy = self.program[self.PC].copy()
-        self.IQ.enqueue(inst_copy)
-        if inst_copy.op.startswith('B'):
-            self.PC = int(inst_copy.s2)
-        else:
-            self.PC += 4
-
-    def update_exit_cond(self):
         try:
-            inst = self.program[self.PC]
+            inst_copy = self.program[self.PC].copy()
+            self.IQ.enqueue(inst_copy)
+            if inst_copy.op.startswith('B'):
+                self.last_branch_PC = self.PC + 4
+                self.PC = int(inst_copy.s2)
+            else:
+                self.PC += 4
         except:
-            self.done = True
+            if self.ROB.is_empty():
+                self.done = True
+
+    def flush(self):
+        rob_list = self.ROB.flush()
+        if rob_list is not None:
+            for rob in rob_list:
+                self.RS.flush(rob.inst_id)
+                if self.RF[rob.dest].reorder == rob.name:
+                    self.RF[rob.dest].reorder = ''
+                    # eğer bu register yenilenmiş robda varsa o rob id ile güncelle
+                    reg_rob = self.ROB.getby_reg(rob.dest)
+                    if reg_rob is not None:
+                        self.RF[rob.dest].reorder = reg_rob.name
+                    else:
+                        self.RF[rob.dest].busy = False
+            self.IQ.flush()
+        else:
+            return
