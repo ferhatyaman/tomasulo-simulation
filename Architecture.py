@@ -165,7 +165,8 @@ class ReOrderBuffer:
         for i, rob in enumerate(self.list):
             if rob.op.startswith('B') and rob.busy and rob.ready and rob.value == 0:
                 rob_list = []
-                rob.busy = False
+                rob.busy = True
+                i = (i + 1) % self.size
                 while i != self.head:
                     if self.list[i].busy:
                         rob_list.append(self.list[i])
@@ -217,6 +218,9 @@ class Architecture:
         # Common Data Bus
         self.CDB = []
 
+        # Report File
+        self.report = open('Report.txt', 'w')
+
     def start(self):
         while not self.done:
             self.print_cycle()
@@ -230,27 +234,29 @@ class Architecture:
                 self.commit()
             self.update_clock()
         self.print_cycle()
+        self.report.write('Program has finished')
+        self.report.close()
 
     def print_cycle(self):
-        print('------------------------')
-        print('CYCLE', self.cycle)
+        self.report.write('\n------------------------')
+        self.report.write('\nCYCLE ' + str(self.cycle) + '\n')
 
-        print('\nInstruction Window')
-        print(self.IQ)
+        self.report.write('\nInstruction Window\n')
+        self.report.write(str(self.IQ))
 
-        print('\nRegisters')
-        print(self.RF)
+        self.report.write('\nRegisters\n')
+        self.report.write(str(self.RF))
 
-        print('\nReservation Stations')
-        print(self.RS)
+        self.report.write('\nReservation Stations\n')
+        self.report.write(str(self.RS))
 
-        print('\nReorder Buffer')
-        print(self.ROB)
+        self.report.write('\nReorder Buffer\n')
+        self.report.write(str(self.ROB))
 
     def print_CDB(self):
-        print('\nCommon Data Bus')
+        self.report.write('\nCommon Data Bus\n')
         if len(self.CDB) != 0:
-            print(self.CDB[0])
+            self.report.write(str(self.CDB[0]))
 
     def issue(self):
         if self.IQ.empty():
@@ -404,9 +410,10 @@ class Architecture:
                 else:
                     rs.vk = int(inst.s2)
                     rs.qk = ''
-            # TODO branch ise roba ekleme
             self.ROB.add(inst_id, inst)
-            self.RF[inst.d].reorder = rob_id
+            # if branch: dont add to RF
+            if not inst.op.startswith('B'):
+                self.RF[inst.d].reorder = rob_id
 
     def execute(self):
         self.RS.execute(self.CDB)
@@ -429,7 +436,8 @@ class Architecture:
         head_rob = self.ROB.get_head()
         if head_rob.ready:
             reg = self.RF[head_rob.dest]
-            reg.value = head_rob.value
+            if not head_rob.op.startswith('B'):
+                reg.value = head_rob.value
             if head_rob.name == reg.reorder:
                 reg.reorder = ''
             head_rob.busy = False
